@@ -1,0 +1,159 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+  "Description" : "{{ elasticsearch_stack_description | default('') }}",
+  "Parameters" : {
+    "ESInstanceType" : {
+      "Description" : "Host EC2 instance type",
+      "Type" : "String",
+      "Default" : "m3.medium.elasticsearch"
+    },
+    "ESVersion" : {
+      "Description" : "ElasticSearch Version",
+      "Type" : "String",
+      "AllowedValues" : ["1.5", "2.3"]
+    },
+    "ESUseEBS" : {
+      "Type" : "String",
+      "Description" : "If set to true, will create EBS volumes for the ElasticSearch cluster",
+      "AllowedValues" : ["true", "false"]
+    },
+    "ESEBSSize" : {
+      "Type" : "Number",
+      "Description" : "Size of the EBS volumes to be used with the ElasticSearch cluster"
+    },
+    "ESEBSIOPS" : {
+      "Type" : "Number",
+      "Description" : "If there is an IOPS requirement for the EBS volumes, this parameter allows you to define it"
+    },
+    "ESEBSType" : {
+      "Type" : "String",
+      "Description" : "Type of EBS volumes to use with the ElasticSearch cluster",
+      "AllowedValues" : [ "gp2", "standard", "io1" ]
+    },
+    "ESInstanceCount" : {
+      "Type" : "Number",
+      "Description" : "Number of instances in the ElasticSearch cluster"
+    },
+    "ESDedicatedMasterEnabled" : {
+      "Type" : "String",
+      "Description" : "If set to true, use a dedicated master, or masters on the ElasticSearch cluster",
+      "AllowedValues" : [ "true", "false" ]
+    },
+    "ESDedicatedMasterCount" : {
+      "Type" : "Number",
+      "Description" : "Number of master nodes to use with the ElasticSearch cluster"
+    },
+    "ESDedicatedMasterType" : {
+      "Type" : "String",
+      "Description" : "The instance type to use with the master nodes"
+    },
+    "ESZoneAwarenessEnabled" : {
+      "Type" : "String",
+      "Description" : "If set to true, allocate nodes across two availability zones",
+      "AllowedValues" : [ "true", "false" ]
+    },
+    "ESSnapshotHour" : {
+      "Type" : "Number",
+      "Description" : "The hour of the day that a cluster snapshot takes place"
+    }
+  },
+  "Conditions" : {
+    "ESEBSEnabled" : { "Fn::Equals" : [{ "Ref" : "ESUseEBS" }, "true"]},
+    "ESEBSUseIOPS" : { "Fn::And" : [{ "Fn::Equals" : [{ "Ref" : "ESUseEBS" }, "true" ]}, { "Fn::Not" : [{ "Fn::Equals" : [{ "Ref" : "ESEBSIOPS" },0]}]}]},
+    "ESUseDedicatedMaster" : { "Fn::Equals" : [{ "Ref" : "ESDedicatedMasterEnabled" }, "true" ]}
+  },
+  "Resources" : {
+    "ElasticSearch" : {
+      "Type" : "AWS::Elasticsearch::Domain",
+      "Properties" : {
+        "ElasticsearchVersion" : { "Ref" : "ESVersion" },
+        "SnapshotOptions" : {
+          "AutomatedSnapshotStartHour" : { "Ref" : "ESSnapshotHour" }
+        },
+        "ElasticsearchClusterConfig" : {
+          "InstanceType" : { "Ref" : "ESInstanceType"},
+          "InstanceCount" : { "Ref" : "ESInstanceCount" },
+          "DedicatedMasterEnabled" : { "Ref" : "ESDedicatedMasterEnabled" },
+          "DedicatedMasterType" : {
+            "Fn::If" : [
+              "ESUseDedicatedMaster",
+              { "Ref" : "ESDedicatedMasterType" },
+              { "Ref" : "AWS::NoValue" }
+            ]
+          },
+          "ZoneAwarenessEnabled" : { "Ref" : "ESZoneAwarenessEnabled" }
+        },
+        "EBSOptions" : {
+          "EBSEnabled" : { "Ref" : "ESUseEBS" },
+          "VolumeSize" : {
+            "Fn::If" : [
+              "ESEBSEnabled",
+              { "Ref" : "ESEBSSize" },
+              { "Ref" : "AWS::NoValue" }
+            ]
+          },
+          "VolumeType" : {
+            "Fn::If" : [
+              "ESEBSEnabled",
+              { "Ref" : "ESEBSType" },
+              {"Ref" : "AWS::NoValue"}
+            ]
+          },
+          "Iops" : {
+            "Fn::If" : [
+              "ESEBSUseIOPS",
+              { "Ref" : "ESEBSIOPS" },
+              {"Ref" : "AWS::NoValue"}
+            ]
+          }
+        }
+        {% if elasticsearch_access_ips is defined %}
+        ,
+        "AccessPolicies" : {
+          "Statement": [
+            {
+              "Action": "*",
+              "Principal": "*",
+              "Effect": "Allow",
+              "Condition": {
+                "IpAddress": {
+                  "aws:SourceIp":[
+                  {% for ip in elasticsearch_access_ips %}
+                    "{{ ip }}"
+                    {% if not loop.last %}, {% endif %}
+                  {% endfor %}
+                  ]
+                }
+              }
+            }
+          ]
+        }
+        {% endif %}
+        {% if elasticsearch_tags is defined %}
+        ,
+        "Tags" : [
+          {% for tag in elasticsearch_tags.keys() %}
+            {
+              "Key" : "{{ tag }}",
+              "Value" : "{{ elasticsearch_tags[tag] }}"
+            }
+            {% if not loop.last %}, {% endif %}
+          {% endfor %}
+        ]
+        {% endif %}
+      }
+    }
+  },
+  "Outputs" : {
+    "ESDomainEndpoint" : {
+      "Value" : {
+        "Fn::GetAtt" : [ "ElasticSearch", "DomainEndpoint" ]
+      }
+    },
+    "ESResource" : {
+      "Value" : {
+        "Ref" : "ElasticSearch"
+      }
+    }
+  }
+}

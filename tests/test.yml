@@ -1,0 +1,2 @@
+- include: defaults.yml
+- include: defaults.yml elasticsearch_stack_state=absent
